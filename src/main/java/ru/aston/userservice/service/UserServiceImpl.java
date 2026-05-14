@@ -5,11 +5,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.aston.userservice.dto.UserDTO;
+import ru.aston.userservice.dto.UserEventDTO;
 import ru.aston.userservice.exception.EmailAlreadyExistsException;
 import ru.aston.userservice.exception.ResourceNotFoundException;
 import ru.aston.userservice.model.User;
 import ru.aston.userservice.repository.UserRepository;
-
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -20,6 +20,7 @@ import java.util.stream.Collectors;
 public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
+    private final org.springframework.kafka.core.KafkaTemplate<String, UserEventDTO> kafkaTemplate;
 
     @Override
     @Transactional
@@ -32,7 +33,7 @@ public class UserServiceImpl implements UserService {
 
         User user = new User(userDTO.getName(), userDTO.getEmail(), userDTO.getAge());
         User savedUser = userRepository.save(user);
-
+        kafkaTemplate.send("user-notifications", new UserEventDTO(savedUser.getEmail(), "CREATE"));
         log.info("Пользователь создан с ID: {}", savedUser.getId());
         return convertToDTO(savedUser);
     }
@@ -77,10 +78,11 @@ public class UserServiceImpl implements UserService {
     @Transactional
     public void deleteUser(Long id) {
         log.info("Запрос на удаление пользователя с ID: {}", id);
-        if (!userRepository.existsById(id)) {
-            throw new ResourceNotFoundException("Невозможно удалить: пользователь с ID " + id + " не найден");
-        }
-        userRepository.deleteById(id);
+        User user = userRepository.findById(id)
+                                  .orElseThrow(() -> new ResourceNotFoundException("Не найден"));
+        String email = user.getEmail();
+        userRepository.delete(user);
+        kafkaTemplate.send("user-notifications", new UserEventDTO(email, "DELETE"));
         log.info("Пользователь с ID {} удален", id);
     }
 
